@@ -21,7 +21,7 @@
         </p>
         <div class="hero-actions">
             <a href="{{ url_for('register') }}" class="btn-primary">Create free account</a>
-            <a href="{{ url_for('login') }}" class="btn-ghost">See how it works</a>
+            <button type="button" class="btn-ghost" id="how-it-works-btn">See how it works</button>
         </div>
     </div>
     <div class="hero-visual">
@@ -100,4 +100,64 @@
     </div>
 </section>
 
+<div class="modal" id="how-it-works-modal">
+    <div class="modal-backdrop" data-modal-close></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-label="How Spendly works">
+        <button type="button" class="modal-close" data-modal-close aria-label="Close video">&times;</button>
+        <div class="modal-video" id="how-it-works-video"></div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    var modal    = document.getElementById('how-it-works-modal');
+    var trigger  = document.getElementById('how-it-works-btn');
+    var videoBox = document.getElementById('how-it-works-video');
+
+    // Placeholder video — swap VIDEO_ID for the real Spendly walkthrough.
+    var VIDEO_ID = 'aqz-KE-bpKQ';
+
+    if (!modal || !trigger || !videoBox) return;
+
+    function openModal() {
+        if (modal.classList.contains('is-open')) return;
+
+        // The iframe is created on open and destroyed on close, so the
+        // player never survives a close and cannot keep playing.
+        var iframe = document.createElement('iframe');
+        iframe.src = 'https://www.youtube.com/embed/' + VIDEO_ID + '?autoplay=1&rel=0';
+        iframe.title = 'How Spendly works';
+        iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
+        iframe.setAttribute('allowfullscreen', '');
+        videoBox.appendChild(iframe);
+
+        modal.classList.add('is-open');
+        document.body.classList.add('modal-open');
+        modal.querySelector('.modal-close').focus();
+    }
+
+    function closeModal() {
+        if (!modal.classList.contains('is-open')) return;
+
+        modal.classList.remove('is-open');
+        document.body.classList.remove('modal-open');
+        videoBox.innerHTML = '';
+        trigger.focus();
+    }
+
+    trigger.addEventListener('click', openModal);
+
+    // Handles both the close button and the backdrop (click-outside).
+    modal.addEventListener('click', function (event) {
+        if (event.target.hasAttribute('data-modal-close')) closeModal();
+    });
+
+    document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') closeModal();
+    });
+})();
+</script>
 {% endblock %}
