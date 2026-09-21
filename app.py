@@ -1,5 +1,6 @@
 import os
 import sqlite3
+from functools import wraps
 
 from flask import Flask, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -39,6 +40,20 @@ def _is_valid_email(email):
     return bool(local) and "." in domain and not domain.startswith(".") and not domain.endswith(".")
 
 
+def guest_only(view):
+    """Redirect already-signed-in visitors away from the sign-in and sign-up pages.
+
+    Applied below @app.route so Flask registers the wrapped function; functools.wraps
+    preserves __name__, which keeps the endpoint name and url_for() working.
+    """
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if session.get("user_id"):
+            return redirect(url_for("landing"))
+        return view(*args, **kwargs)
+    return wrapped
+
+
 # ------------------------------------------------------------------ #
 # Routes                                                              #
 # ------------------------------------------------------------------ #
@@ -49,6 +64,7 @@ def landing():
 
 
 @app.route("/register", methods=["GET", "POST"])
+@guest_only
 def register():
     if request.method == "GET":
         return render_template("register.html")
@@ -100,6 +116,7 @@ def register():
 
 
 @app.route("/login", methods=["GET", "POST"])
+@guest_only
 def login():
     if request.method == "GET":
         return render_template("login.html")
