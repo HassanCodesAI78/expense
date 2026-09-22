@@ -1,6 +1,6 @@
 import os
 import sqlite3
-from datetime import date
+from datetime import date, datetime
 from functools import wraps
 
 from flask import Flask, redirect, render_template, request, session, url_for
@@ -93,6 +93,92 @@ def login_required(view):
             return redirect(url_for("login"))
         return view(*args, **kwargs)
     return wrapped
+
+
+# ------------------------------------------------------------------ #
+# Profile page data                                                   #
+# ------------------------------------------------------------------ #
+# Each helper below is a pure function over the same `rows` sequence that
+# profile() fetches once, so every figure on the page derives from a single
+# result set and none can drift from the rows it claims to summarise.
+
+def _profile_expenses(rows):
+    """Transaction table rows: display-formatted, in the order given."""
+    return [
+        {
+            "date": date.fromisoformat(row["date"]).strftime("%d %b %Y"),
+            "description": row["description"],
+            "category": row["category"],
+            "amount": inr(row["amount"]),
+        }
+        for row in rows
+    ]
+
+
+def _profile_stats(rows, breakdown):
+    """Summary row. Top category is sourced from the sorted breakdown.
+
+    `breakdown` must be sorted DESCENDING by amount — this reads breakdown[0]
+    as "the top category", so the stat card names the same category as the
+    tallest bar. An ascending breakdown would silently report the *smallest*
+    category with nothing failing. Taking it as an argument rather than
+    recomputing keeps the total derived in exactly one place.
+
+    The em-dash placeholder matters: an empty `.profile-stat-value` collapses
+    that line, so with no expenses the card loses its baseline against its two
+    neighbours.
+    """
+    total = sum(row["amount"] for row in rows)
+    return {
+        "total_spent": inr(total),
+        "expense_count": len(rows),
+        "top_category": breakdown[0]["category"] if breakdown else "—",
+    }
+
+
+def _profile_breakdown(rows):
+    """Per-category totals, descending by amount, each with a bar width pct."""
+    total = sum(row["amount"] for row in rows)
+    # `<= 0`, not `== 0`: a zero total divides by zero, and `amount` carries no
+    # CHECK constraint, so a negative total is reachable too — it would emit
+    # negative percentages (`width: -33%`), which browsers ignore, collapsing
+    # every bar. Both cases return [] and fall through to the empty state.
+    if total <= 0:
+        return []
+    totals = {}
+    for row in rows:
+        totals[row["category"]] = totals.get(row["category"], 0) + row["amount"]
+    return [
+        {
+            "category": category,
+            "amount": inr(amount),
+            # Bare int on purpose — the template writes this into `width: N%`.
+            # Passing it through inr() would yield `width: ₹33%`, invalid CSS.
+            "pct": round(amount / total * 100),
+        }
+        for category, amount in sorted(
+            totals.items(), key=lambda item: item[1], reverse=True
+        )
+    ]
+
+
+def _profile_user(user_row):
+    """Identity card for the signed-in user.
+
+    `created_at` is `datetime('now')` TEXT — space-separated, not ISO
+    `T`-separated, so it needs `datetime.fromisoformat`, not `date`. It carries
+    a DEFAULT but no NOT NULL, so a hand-inserted row can hold NULL.
+    """
+    name = user_row["name"]
+    raw = user_row["created_at"]
+    return {
+        "name": name,
+        "email": user_row["email"],
+        "member_since": (
+            datetime.fromisoformat(raw).strftime("%d %B %Y") if raw else "—"
+        ),
+        "initials": _initials(name),
+    }
 
 
 # ------------------------------------------------------------------ #
@@ -216,79 +302,47 @@ def privacy():
 # Placeholder routes — students will implement these                  #
 # ------------------------------------------------------------------ #
 
-# ------------------------------------------------------------------ #
-# Profile data — hardcoded, replaced by real queries in Step 5        #
-# ------------------------------------------------------------------ #
-
-# Mirrors database/db.py's seed: the demo user's own eight expenses, newest
-# first, and their real `created_at` date. Keeping this identical to what
-# seed_db() writes means Step 5 can swap in a real query without the page
-# changing appearance at all — which is the point of building the UI first.
-PROFILE_USER = {
-    "name": "Demo User",
-    "email": "demo@spendly.com",
-    "member_since": "18 September 2026",
-}
-
-# Dicts rather than tuples so the derivation below reads as row["amount"] —
-# the same access sqlite3.Row gives once these rows come from a query.
-PROFILE_EXPENSES = (
-    {"date": "2026-09-16", "description": "Gift for a friend", "category": "Other", "amount": 500.00},
-    {"date": "2026-09-14", "description": "Running shoes", "category": "Shopping", "amount": 3199.00},
-    {"date": "2026-09-12", "description": "Movie tickets", "category": "Entertainment", "amount": 649.00},
-    {"date": "2026-09-10", "description": "Pharmacy", "category": "Health", "amount": 899.00},
-    {"date": "2026-09-08", "description": "Electricity bill", "category": "Bills", "amount": 2450.00},
-    {"date": "2026-09-06", "description": "Metro card recharge", "category": "Transport", "amount": 320.00},
-    {"date": "2026-09-04", "description": "Groceries", "category": "Food", "amount": 1280.00},
-    {"date": "2026-09-02", "description": "Lunch with team", "category": "Food", "amount": 450.00},
-)
-
-
 @app.route("/profile")
 @login_required
 def profile():
-    """Render the profile page from hardcoded data — no queries until Step 5.
+    """Render the signed-in user's own profile page from the database.
 
-    Total, transaction count, top category and every bar width are derived from
-    PROFILE_EXPENSES rather than written out separately, so no figure on the
-    page can drift from the rows it claims to summarise.
+    One query supplies the rows, and every figure on the page is derived from
+    that single sequence by the helpers above, so no value can drift from the
+    rows it summarises. Both queries are scoped by `session["user_id"]`; no
+    expense id, user id or email is ever taken from the request.
     """
-    expenses = [
-        {
-            "date": date.fromisoformat(row["date"]).strftime("%d %b %Y"),
-            "description": row["description"],
-            "category": row["category"],
-            "amount": inr(row["amount"]),
-        }
-        for row in PROFILE_EXPENSES
-    ]
+    user_id = session["user_id"]  # read once, so the two queries cannot disagree
+    conn = get_db()
+    try:
+        user_row = conn.execute(
+            "SELECT name, email, created_at FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        if user_row is None:
+            # The session points at an account that no longer exists. Drop it
+            # rather than rendering a page that greets None.
+            session.clear()
+            return redirect(url_for("login"))
 
-    total = sum(row["amount"] for row in PROFILE_EXPENSES)
+        rows = conn.execute(
+            "SELECT date, description, category, amount FROM expenses"
+            " WHERE user_id = ? ORDER BY date DESC, id DESC",
+            (user_id,),
+        ).fetchall()
+    finally:
+        conn.close()
 
-    totals = {}
-    for row in PROFILE_EXPENSES:
-        totals[row["category"]] = totals.get(row["category"], 0) + row["amount"]
-
-    breakdown = [
-        {
-            "category": category,
-            "amount": inr(amount),
-            "pct": round(amount / total * 100),
-        }
-        for category, amount in sorted(
-            totals.items(), key=lambda item: item[1], reverse=True
-        )
-    ]
+    # Built once and handed to both the template and _profile_stats, so the
+    # "top category" stat always names the same category as the tallest bar.
+    # `rows` here are raw database rows — _profile_stats sums their `amount`,
+    # so it must not be given the inr()-formatted list from _profile_expenses.
+    breakdown = _profile_breakdown(rows)
 
     return render_template(
         "profile.html",
-        user={**PROFILE_USER, "initials": _initials(PROFILE_USER["name"])},
-        stats={
-            "total_spent": inr(total),
-            "expense_count": len(PROFILE_EXPENSES),
-            "top_category": breakdown[0]["category"],
-        },
-        expenses=expenses,
+        user=_profile_user(user_row),
+        stats=_profile_stats(rows, breakdown),
+        expenses=_profile_expenses(rows),
         breakdown=breakdown,
     )
 
