@@ -1,5 +1,6 @@
 import os
 import sqlite3
+from datetime import date
 from functools import wraps
 
 from flask import Flask, redirect, render_template, request, session, url_for
@@ -40,6 +41,32 @@ def _is_valid_email(email):
     return bool(local) and "." in domain and not domain.startswith(".") and not domain.endswith(".")
 
 
+def inr(amount):
+    """Format a rupee amount with Indian digit grouping: ₹9,747 / ₹1,23,456.
+
+    Templates must not do arithmetic and Jinja has no thousands separator, so
+    every amount is formatted here before it reaches the page. Indian grouping
+    is last-three-then-pairs, not the western three-then-pairs.
+    """
+    digits = str(round(amount))
+    if len(digits) <= 3:
+        return f"₹{digits}"
+
+    head, tail = digits[:-3], digits[-3:]
+    groups = []
+    while len(head) > 2:
+        groups.insert(0, head[-2:])
+        head = head[:-2]
+    if head:
+        groups.insert(0, head)
+    return f"₹{','.join(groups)},{tail}"
+
+
+def _initials(name):
+    """First letters of the first two words, for the avatar circle."""
+    return "".join(part[0] for part in name.split()[:2]).upper()
+
+
 def guest_only(view):
     """Redirect already-signed-in visitors away from the sign-in and sign-up pages.
 
@@ -50,6 +77,20 @@ def guest_only(view):
     def wrapped(*args, **kwargs):
         if session.get("user_id"):
             return redirect(url_for("landing"))
+        return view(*args, **kwargs)
+    return wrapped
+
+
+def login_required(view):
+    """Redirect signed-out visitors to the sign-in page.
+
+    Applied below @app.route so Flask registers the wrapped function; functools.wraps
+    preserves __name__, which keeps the endpoint name and url_for() working.
+    """
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not session.get("user_id"):
+            return redirect(url_for("login"))
         return view(*args, **kwargs)
     return wrapped
 
@@ -108,6 +149,9 @@ def register():
                 else:
                     session.clear()
                     session["user_id"] = cursor.lastrowid
+                    # Cached so the navbar can greet the user without a query
+                    # on every page render — see the profile step.
+                    session["user_name"] = name
                     return redirect(url_for("landing"))
         finally:
             conn.close()
@@ -132,7 +176,7 @@ def login():
         conn = get_db()
         try:
             user = conn.execute(
-                "SELECT id, password_hash FROM users WHERE email = ?", (email,)
+                "SELECT id, name, password_hash FROM users WHERE email = ?", (email,)
             ).fetchone()
         finally:
             conn.close()
@@ -146,6 +190,7 @@ def login():
         else:
             session.clear()
             session["user_id"] = user["id"]
+            session["user_name"] = user["name"]
             return redirect(url_for("landing"))
 
     return render_template("login.html", error=error, email=email)
@@ -171,9 +216,81 @@ def privacy():
 # Placeholder routes — students will implement these                  #
 # ------------------------------------------------------------------ #
 
+# ------------------------------------------------------------------ #
+# Profile data — hardcoded, replaced by real queries in Step 5        #
+# ------------------------------------------------------------------ #
+
+# Mirrors database/db.py's seed: the demo user's own eight expenses, newest
+# first, and their real `created_at` date. Keeping this identical to what
+# seed_db() writes means Step 5 can swap in a real query without the page
+# changing appearance at all — which is the point of building the UI first.
+PROFILE_USER = {
+    "name": "Demo User",
+    "email": "demo@spendly.com",
+    "member_since": "18 September 2026",
+}
+
+# Dicts rather than tuples so the derivation below reads as row["amount"] —
+# the same access sqlite3.Row gives once these rows come from a query.
+PROFILE_EXPENSES = (
+    {"date": "2026-09-16", "description": "Gift for a friend", "category": "Other", "amount": 500.00},
+    {"date": "2026-09-14", "description": "Running shoes", "category": "Shopping", "amount": 3199.00},
+    {"date": "2026-09-12", "description": "Movie tickets", "category": "Entertainment", "amount": 649.00},
+    {"date": "2026-09-10", "description": "Pharmacy", "category": "Health", "amount": 899.00},
+    {"date": "2026-09-08", "description": "Electricity bill", "category": "Bills", "amount": 2450.00},
+    {"date": "2026-09-06", "description": "Metro card recharge", "category": "Transport", "amount": 320.00},
+    {"date": "2026-09-04", "description": "Groceries", "category": "Food", "amount": 1280.00},
+    {"date": "2026-09-02", "description": "Lunch with team", "category": "Food", "amount": 450.00},
+)
+
+
 @app.route("/profile")
+@login_required
 def profile():
-    return "Profile page — coming in Step 4"
+    """Render the profile page from hardcoded data — no queries until Step 5.
+
+    Total, transaction count, top category and every bar width are derived from
+    PROFILE_EXPENSES rather than written out separately, so no figure on the
+    page can drift from the rows it claims to summarise.
+    """
+    expenses = [
+        {
+            "date": date.fromisoformat(row["date"]).strftime("%d %b %Y"),
+            "description": row["description"],
+            "category": row["category"],
+            "amount": inr(row["amount"]),
+        }
+        for row in PROFILE_EXPENSES
+    ]
+
+    total = sum(row["amount"] for row in PROFILE_EXPENSES)
+
+    totals = {}
+    for row in PROFILE_EXPENSES:
+        totals[row["category"]] = totals.get(row["category"], 0) + row["amount"]
+
+    breakdown = [
+        {
+            "category": category,
+            "amount": inr(amount),
+            "pct": round(amount / total * 100),
+        }
+        for category, amount in sorted(
+            totals.items(), key=lambda item: item[1], reverse=True
+        )
+    ]
+
+    return render_template(
+        "profile.html",
+        user={**PROFILE_USER, "initials": _initials(PROFILE_USER["name"])},
+        stats={
+            "total_spent": inr(total),
+            "expense_count": len(PROFILE_EXPENSES),
+            "top_category": breakdown[0]["category"],
+        },
+        expenses=expenses,
+        breakdown=breakdown,
+    )
 
 
 @app.route("/expenses/add")
