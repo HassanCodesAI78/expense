@@ -20,6 +20,10 @@
             </a>
             <div class="nav-links">
                 {% if session.get('user_id') %}
+                {# The name doubles as the link to /profile, which nothing else
+                   on the site points at. It hides on mobile automatically via
+                   the existing `.nav-links a:not(.nav-cta)` rule. #}
+                <a href="{{ url_for('profile') }}">{{ session.get('user_name') or 'Your profile' }}</a>
                 <a href="{{ url_for('logout') }}" class="nav-cta">Sign out</a>
                 {% else %}
                 <a href="{{ url_for('login') }}">Sign in</a>
