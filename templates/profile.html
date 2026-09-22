@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block title %}Your profile — Spendly{% endblock %}
+
+{% block head %}
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@700&display=swap" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+
+<section class="profile-section">
+    <div class="profile-inner">
+
+        <div class="profile-header">
+            <h1 class="profile-title">Your profile</h1>
+            <p class="profile-subtitle">Your account details and spending at a glance</p>
+        </div>
+
+        <div class="profile-card">
+            <div class="profile-avatar" aria-hidden="true">{{ user.initials }}</div>
+            <div class="profile-identity">
+                <p class="profile-name">{{ user.name }}</p>
+                <p class="profile-email">{{ user.email }}</p>
+                <p class="profile-meta">Member since {{ user.member_since }}</p>
+            </div>
+        </div>
+
+        <div class="profile-stats">
+            <div class="profile-stat">
+                <span class="profile-stat-label">Total spent</span>
+                <span class="profile-stat-value">{{ stats.total_spent }}</span>
+            </div>
+            <div class="profile-stat">
+                <span class="profile-stat-label">Expenses logged</span>
+                <span class="profile-stat-value">{{ stats.expense_count }}</span>
+            </div>
+            <div class="profile-stat">
+                <span class="profile-stat-label">Top category</span>
+                <span class="profile-stat-value">{{ stats.top_category }}</span>
+            </div>
+        </div>
+
+        <div class="profile-panel">
+            <h2 class="profile-panel-title">Recent transactions</h2>
+            <div class="profile-table-wrap">
+                <table class="profile-table">
+                    <thead>
+                        <tr>
+                            <th scope="col">Date</th>
+                            <th scope="col">Description</th>
+                            <th scope="col">Category</th>
+                            <th scope="col" class="profile-amount">Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for expense in expenses %}
+                        <tr>
+                            <td>{{ expense.date }}</td>
+                            <td>{{ expense.description }}</td>
+                            <td><span class="cat-badge">{{ expense.category }}</span></td>
+                            <td class="profile-amount">{{ expense.amount }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="profile-panel">
+            <h2 class="profile-panel-title">Where your money went</h2>
+            {% for cat in breakdown %}
+            <div class="cat-row">
+                <span class="cat-name">{{ cat.category }}</span>
+                <div class="cat-bar-track">
+                    <div class="cat-bar" style="width: {{ cat.pct }}%"></div>
+                </div>
+                <span class="cat-amount">{{ cat.amount }}</span>
+                <span class="cat-pct">{{ cat.pct }}%</span>
+            </div>
+            {% endfor %}
+        </div>
+
+    </div>
+</section>
+
+{% endblock %}
